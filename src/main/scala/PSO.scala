@@ -101,9 +101,6 @@ class Particle(dimP: Int, dimF: Int, lB: Array[Double], uB: Array[Double], gB: G
   private val c1 = 0.2
   private val c2 = 0.2
 
-//  private val this.dimP = dimP
-//  private val this.dimF = dimF
-
   def randInit(): Unit = {
     val rand = new Random()
     for (i <- 0 until (dimP / 3)) {
@@ -160,6 +157,7 @@ class Particle(dimP: Int, dimF: Int, lB: Array[Double], uB: Array[Double], gB: G
   def run(): Unit = {
     updateBest()
     updateCur()
+    updateV()
   }
 }
 
