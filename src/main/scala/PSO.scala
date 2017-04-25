@@ -1,4 +1,6 @@
-import org.apache.spark.{SparkConf, SparkContext}
+import org.apache.spark.broadcast.Broadcast
+import org.apache.spark.sql.types.{DoubleType, StructField, StructType}
+import org.apache.spark.sql.{DataFrame, Row, SparkSession}
 import org.apache.spark.util.AccumulatorV2
 
 import scala.collection.mutable.ArrayBuffer
@@ -8,45 +10,90 @@ import scala.util.Random
   * Created by zhaoxuan on 2017/4/23.
   */
 object PSO {
-  private val dimP = 6
-  private val dimF = 4
+  private val dimP = 12
+  private val dimF = 1
 
   def compareTo(p1: Array[Double], p2: Array[Double]): Boolean = {
-    true
+    for (i <- p1.indices) {
+      if (p1(i) > p2(i)) {
+        return true
+      }
+    }
+    false
   }
 
-  def calFitness(pos: Array[Double]): Array[Double] = {
+  def calFitness(pos: Array[Double], data: Broadcast[DataFrame]): Array[Double] = {
     val fitness = new Array[Double](dimF)
+    println("into calFitness")
+    val n = data.value.collect().count(t => isValid(pos, t.toSeq.toArray.map(_.toString.toDouble)))
+
+//    fitness(0) = n / data.value.collect().length
+
     fitness
   }
 
-  def main(args: Array[String]) {
-    val conf = new SparkConf().setAppName("PSO")
-    val sc = new SparkContext(conf)
+  def isValid(pos: Array[Double], transaction: Array[Double]): Boolean = {
+    println("into isValid")
+    var j = 0
+    for (i <- transaction.indices) {
+      if (pos(j) < 0.66 ) {
+        if (transaction(i) < pos(j + 1) && transaction(i) > pos(j + 2)) {
+          return false
+        }
+      }
+      j += 3
+    }
+    true
+  }
 
-    val data = sc.textFile("")
-    val dim = dimP / 3
-    val lB = new Array[Double](dim)
-    val uB = new Array[Double](dim)
+  def main(args: Array[String]) {
+    val ss = SparkSession.builder().appName("PSO").master("local[4]").config("spark.sql.warehouse.dir", "C:/Users/Zhaoxuan/IdeaProjects/SparkDemo/spark-warehouse").getOrCreate()
+
+    //create DataFrame from source file
+    val schemaString = "depth latitude longitude richter"
+
+    val fields = schemaString.split("\\s").map(fieldName => StructField(fieldName, DoubleType, nullable = true))
+    val schema = StructType(fields)
+
+    val rowRDD = ss.sparkContext.textFile("C:/Users/Zhaoxuan/Desktop/Data/QU.dat").map(_.split(","))
+      .map(line => Row(line(0).toDouble, line(1).toDouble, line(2).toDouble, line(3).toDouble))
+
+    val df = ss.createDataFrame(rowRDD, schema)
+
+    //init particle swarm
+    val fieldNames = df.schema.fieldNames
+    val lB = df.agg(fieldNames(0) -> "min", fieldNames(1) -> "min", fieldNames(2) -> "min", fieldNames(3) -> "min")
+      .first().toSeq.toArray.map(_.toString.toDouble)
+    val uB = df.agg(fieldNames(0) -> "max", fieldNames(1) -> "max", fieldNames(2) -> "max", fieldNames(3) -> "max")
+      .first().toSeq.toArray.map(_.toString.toDouble)
     val gB = new GlobalBest(dimP, dimF)
+
+    ss.sparkContext.register(gB, "Global Best")
+
+    val broadCastDF = ss.sparkContext.broadcast(df)
+    val broadCastLB = ss.sparkContext.broadcast(lB)
+    val broadCastUB = ss.sparkContext.broadcast(uB)
 
     val num = 10
     val particles = new Array[Particle](num)
     for (i <- 0 until num) {
-      particles(i) = new Particle(dimP, dimF, lB, uB, gB)
+      particles(i) = new Particle(dimP, dimF, broadCastLB.value, broadCastUB.value, gB, broadCastDF)
     }
 
-    val particlesRDD = sc.parallelize(particles)
+    val particlesRDD = ss.sparkContext.parallelize(particles)
+
+    particlesRDD.foreach(_.randInit())
 
     val iteration = 100
 
     for (i <- 0 until iteration) {
       particlesRDD.foreach(_.run())
+      printf(s"Iteration: $i\n")
     }
   }
 }
 
-class Particle(dimP: Int, dimF: Int, lB: Array[Double], uB: Array[Double], gB: GlobalBest) {
+class Particle(dimP: Int, dimF: Int, lB: Array[Double], uB: Array[Double], gB: GlobalBest, data: Broadcast[DataFrame]) extends Serializable{
   private var lBest: Record = new Record(dimP, dimF)
   private val cur: Record = new Record(dimP, dimF)
   private val velocity: Array[Double] = new Array[Double](dimP)
@@ -66,7 +113,7 @@ class Particle(dimP: Int, dimF: Int, lB: Array[Double], uB: Array[Double], gB: G
       cur.pos(j + 2) = cur.pos(j + 1) + rand.nextDouble() * (uB(i) - cur.pos(j + 1))
     }
 
-    cur.fitness = PSO.calFitness(cur.pos)
+    cur.fitness = PSO.calFitness(cur.pos, data)
   }
 
   def updateBest(): Unit = {
@@ -107,18 +154,17 @@ class Particle(dimP: Int, dimF: Int, lB: Array[Double], uB: Array[Double], gB: G
   }
 
   def updateFitness(): Unit = {
-    cur.fitness = PSO.calFitness(cur.pos)
+    cur.fitness = PSO.calFitness(cur.pos, data)
   }
 
   def run(): Unit = {
-    randInit()
     updateBest()
     updateCur()
   }
 }
 
 
-class Record(dimP: Int, dimF: Int) {
+class Record(dimP: Int, dimF: Int) extends Serializable{
   var pos: Array[Double] = new Array[Double](dimP)
   var fitness: Array[Double] = new Array[Double](dimF)
 }
