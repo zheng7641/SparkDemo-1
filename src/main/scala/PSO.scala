@@ -24,16 +24,14 @@ object PSO {
 
   def calFitness(pos: Array[Double], data: Broadcast[DataFrame]): Array[Double] = {
     val fitness = new Array[Double](dimF)
-    println("into calFitness")
     val n = data.value.collect().count(t => isValid(pos, t.toSeq.toArray.map(_.toString.toDouble)))
 
-//    fitness(0) = n / data.value.collect().length
+    fitness(0) = n / data.value.collect().length
 
     fitness
   }
 
   def isValid(pos: Array[Double], transaction: Array[Double]): Boolean = {
-    println("into isValid")
     var j = 0
     for (i <- transaction.indices) {
       if (pos(j) < 0.66 ) {
@@ -87,8 +85,14 @@ object PSO {
     val iteration = 100
 
     for (i <- 0 until iteration) {
-      particlesRDD.foreach(_.run())
+      particlesRDD.map(_.run())
       printf(s"Iteration: $i\n")
+    }
+
+    println(gB.value.size)
+
+    for (i <- gB.value.indices) {
+      println("Position: " + gB.value(i).pos + "  Fitness: " + gB.value(i).fitness)
     }
   }
 }
@@ -101,7 +105,7 @@ class Particle(dimP: Int, dimF: Int, lB: Array[Double], uB: Array[Double], gB: G
   private val c1 = 0.2
   private val c2 = 0.2
 
-  def randInit(): Unit = {
+  def randInit(): Particle = {
     val rand = new Random()
     for (i <- 0 until (dimP / 3)) {
       val j = 3 * i
@@ -111,6 +115,10 @@ class Particle(dimP: Int, dimF: Int, lB: Array[Double], uB: Array[Double], gB: G
     }
 
     cur.fitness = PSO.calFitness(cur.pos, data)
+//    println(cur.pos)
+//    println(cur.fitness)
+
+    this
   }
 
   def updateBest(): Unit = {
@@ -154,10 +162,12 @@ class Particle(dimP: Int, dimF: Int, lB: Array[Double], uB: Array[Double], gB: G
     cur.fitness = PSO.calFitness(cur.pos, data)
   }
 
-  def run(): Unit = {
+  def run(): Particle = {
     updateBest()
     updateCur()
     updateV()
+
+    this
   }
 }
 
