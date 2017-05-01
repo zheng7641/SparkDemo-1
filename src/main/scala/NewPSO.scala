@@ -16,6 +16,7 @@ object NewPSO {
 
     //create DataFrame from source file
     val schemaString = "depth latitude longitude richter"
+//    val schemaString = "1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17"
 
     val fields = schemaString.split("\\s").map(fieldName => StructField(fieldName, DoubleType, nullable = true))
     val schema = StructType(fields)
@@ -26,32 +27,67 @@ object NewPSO {
 
     val df = ss.createDataFrame(rowRDD, schema)
 
+    val broadcastDF = ss.sparkContext.broadcast(df)
+
     //init particle swarm
     val dimP = 12
-    val dimF = 4
-    val population = 10
-    val fieldNames = df.schema.fieldNames
+    val dimF = 1
+    val population = 100
+    val iteration = 1000
+    val length = rowRDD.count()
 
+    val fieldNames = df.schema.fieldNames
     val lB = df.agg(fieldNames(0) -> "min", fieldNames(1) -> "min", fieldNames(2) -> "min", fieldNames(3) -> "min")
       .first().toSeq.toArray.map(_.toString.toDouble)
     val uB = df.agg(fieldNames(0) -> "max", fieldNames(1) -> "max", fieldNames(2) -> "max", fieldNames(3) -> "max")
       .first().toSeq.toArray.map(_.toString.toDouble)
 
-    val particles = new Array[Particle](population)
+    var particles = new Array[Particle](population)
 
     for (i <- particles.indices) {
       particles(i) = new Particle(dimP, dimF, lB, uB)
     }
 
-    val particleRDD = ss.sparkContext.parallelize(particles)
+    var particleRDD = ss.sparkContext.parallelize(particles)
 
-    val res = particleRDD.map(_.randInit()).collect()
+    particleRDD = particleRDD.map(_.randInit())
+
+    particleRDD = particleRDD.map(_.updateFitness())
+
+    particles = particleRDD.collect()
+
+    for (iter <- 0 to iteration) {
+      println(iter)
+      for (i <- particles.indices) {
+        val num = df.filter(dataFilter(_, particles(i).cur.pos)).count()
+        particles(i).cur.fitness(0) = num.toDouble / 100000
+      }
+    }
+
+    particleRDD = ss.sparkContext.parallelize(particles)
+
+    val res = particleRDD.collect()
 
     for (i <- 0 until population) {
       res(i).printInfo()
     }
 
     ss.stop()
+  }
+
+  def dataFilter(row: Row, pos: Array[Double]): Boolean = {
+    val array = row.toSeq.toArray.map(_.toString.toDouble)
+
+    var j = 0
+    for (i <- array.indices) {
+      if (pos(j) < 0.66) {
+        if (array(i) < pos(j + 1) || array(i) > pos(j + 2)) {
+          return false
+        }
+      }
+      j += 3
+    }
+    true
   }
 }
 
@@ -62,7 +98,7 @@ class Record(dimP: Int, dimF: Int) extends Serializable{
 
 class Particle(dimP: Int, dimF: Int, lB: Array[Double], uB: Array[Double]) extends Serializable{
   private var lBest: Record = new Record(dimP, dimF)
-  private val cur: Record = new Record(dimP, dimF)
+  val cur: Record = new Record(dimP, dimF)
   private val velocity: Array[Double] = new Array[Double](dimP)
   private val w = 0.8
   private val c1 = 0.2
@@ -70,16 +106,25 @@ class Particle(dimP: Int, dimF: Int, lB: Array[Double], uB: Array[Double]) exten
 
   def randInit(): Particle = {
     val rand = new Random()
+    var j = 0
     for (i <- 0 until (dimP / 3)) {
-      val j = 3 * i
       cur.pos(j) = rand.nextDouble()
       cur.pos(j + 1) = lB(i) + rand.nextDouble() * (uB(i) - lB(i))
       cur.pos(j + 2) = cur.pos(j + 1) + rand.nextDouble() * (uB(i) - cur.pos(j + 1))
+      j += 3
+    }
+    this
+  }
+
+  def updateFitness(): Particle = {
+    var num = 0.0
+
+    for (i <- 0 to 99999) {
+      num += 1
     }
 
-//    cur.fitness = PSO.calFitness(cur.pos)
-    //    println(cur.pos)
-    //    println(cur.fitness)
+    cur.fitness(0) = num / 100000000
+
     this
   }
 
@@ -133,10 +178,6 @@ class Particle(dimP: Int, dimF: Int, lB: Array[Double], uB: Array[Double]) exten
 //    }
 //  }
 
-//  def updateFitness(): Unit = {
-//    cur.fitness = PSO.calFitness(cur.pos, data)
-//  }
-//
 //  def run(): Particle = {
 //    updateBest()
 //    updateCur()
