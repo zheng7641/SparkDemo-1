@@ -11,8 +11,9 @@ import scala.util.Random
 object NewPSO {
   def main(args: Array[String]): Unit = {
 //    val warehouseDir = "C:/Users/Zhaoxuan/IdeaProjects/SparkDemo/spark-warehouse"
-    val warehouseDir = "/Users/zhaoxuan/Documents/Programs/IdeaProjects/SparkDemo/spark-warehouse"
-    val ss = SparkSession.builder().appName("PSO").master("local[4]").config("spark.sql.warehouse.dir", warehouseDir).getOrCreate()
+//    val warehouseDir = "/Users/zhaoxuan/Documents/Programs/IdeaProjects/SparkDemo/spark-warehouse"
+//    val ss = SparkSession.builder().appName("PSO").master("local[4]").config("spark.sql.warehouse.dir", warehouseDir).getOrCreate()
+    val ss = SparkSession.builder().appName("PSO").getOrCreate()
 
     //create DataFrame from source file
     val schemaString = "depth latitude longitude richter"
@@ -21,19 +22,22 @@ object NewPSO {
     val fields = schemaString.split("\\s").map(fieldName => StructField(fieldName, DoubleType, nullable = true))
     val schema = StructType(fields)
 
-    val filePath = "/Users/zhaoxuan/Documents/Data/PSO Data/QU.dat"
+//    val filePath = "/Users/zhaoxuan/Documents/Data/PSO Data/QU.dat"
+    val filePath = "hdfs://10.109.247.120:9000/input/pso_test_data_500.txt"
     val rowRDD = ss.sparkContext.textFile(filePath).map(_.split(","))
       .map(line => Row(line(0).toDouble, line(1).toDouble, line(2).toDouble, line(3).toDouble))
 
     val df = ss.createDataFrame(rowRDD, schema)
 
-    val broadcastDF = ss.sparkContext.broadcast(df)
+//    val broadcastDF = ss.sparkContext.broadcast(df)
+
+    df.cache()
 
     //init particle swarm
     val dimP = 12
     val dimF = 1
-    val population = 100
-    val iteration = 1000
+    val population = 10
+    val iteration = 100
     val length = rowRDD.count()
 
     val fieldNames = df.schema.fieldNames
@@ -56,10 +60,17 @@ object NewPSO {
 
     particles = particleRDD.collect()
 
+    val acc = ss.sparkContext.longAccumulator("count")
+
     for (iter <- 0 to iteration) {
       println(iter)
       for (i <- particles.indices) {
-        val num = df.filter(dataFilter(_, particles(i).cur.pos)).count()
+        df.filter(dataFilter(_, particles(i).cur.pos)).foreach(line => acc.add(1L))
+
+        val num = acc.value
+
+        acc.reset()
+
         particles(i).cur.fitness(0) = num.toDouble / 100000
       }
     }
@@ -68,9 +79,7 @@ object NewPSO {
 
     val res = particleRDD.collect()
 
-    for (i <- 0 until population) {
-      res(i).printInfo()
-    }
+
 
     ss.stop()
   }
