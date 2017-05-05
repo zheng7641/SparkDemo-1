@@ -1,5 +1,6 @@
 import org.apache.spark.{SparkConf, SparkContext}
 import org.apache.spark.broadcast.Broadcast
+import org.apache.spark.rdd.RDD
 import org.apache.spark.sql._
 import org.apache.spark.sql.types.{DoubleType, StructField, StructType}
 
@@ -23,13 +24,13 @@ object NewPSO {
     val schema = StructType(fields)
 
 //    val filePath = "/Users/zhaoxuan/Documents/Data/PSO Data/QU.dat"
-    val filePath = "hdfs://10.109.247.120:9000/input/pso_test_data_500.txt"
+    val filePath = "hdfs://10.109.247.120:9000/input/pso_test_data.txt"
     val rowRDD = ss.sparkContext.textFile(filePath).map(_.split(","))
       .map(line => Row(line(0).toDouble, line(1).toDouble, line(2).toDouble, line(3).toDouble))
 
-    val df = ss.createDataFrame(rowRDD, schema)
+    val lineRDD = ss.sparkContext.textFile(filePath).map(_.split(",")).map(_.map(_.toDouble))
 
-//    val broadcastDF = ss.sparkContext.broadcast(df)
+    val df = ss.createDataFrame(rowRDD, schema)
 
     df.cache()
 
@@ -56,30 +57,37 @@ object NewPSO {
 
     particleRDD = particleRDD.map(_.randInit())
 
-    particleRDD = particleRDD.map(_.updateFitness())
-
     particles = particleRDD.collect()
 
-    val acc = ss.sparkContext.longAccumulator("count")
+//    val acc = ss.sparkContext.longAccumulator("count")
+//    //Method 1: for each particle scan the data in parallel
+//    for (iter <- 0 to iteration) {
+//      println(iter)
+//      for (i <- particles.indices) {
+//        df.filter(dataFilter(_, particles(i).cur.pos)).foreach(line => acc.add(1L))
+//
+//        val num = acc.value
+//
+//        acc.reset()
+//
+//        particles(i).cur.fitness(0) = num.toDouble / 100000
+//      }
+//    }
 
-    for (iter <- 0 to iteration) {
-      println(iter)
-      for (i <- particles.indices) {
-        df.filter(dataFilter(_, particles(i).cur.pos)).foreach(line => acc.add(1L))
+    //Method 2: handle particles in parallel and for each particle scan the data in order
+    lineRDD.cache()
+    val lines = lineRDD.collect()
+    val broadCast = ss.sparkContext.broadcast(lines)
 
-        val num = acc.value
-
-        acc.reset()
-
-        particles(i).cur.fitness(0) = num.toDouble / 100000
-      }
+    for (iter <- 0 until iteration) {
+      particleRDD = particleRDD.map(_.updateFitness(broadCast.value))
     }
-
-    particleRDD = ss.sparkContext.parallelize(particles)
 
     val res = particleRDD.collect()
 
-
+    for (i <- res.indices) {
+      println(res(i).cur.fitness(0))
+    }
 
     ss.stop()
   }
@@ -125,14 +133,23 @@ class Particle(dimP: Int, dimF: Int, lB: Array[Double], uB: Array[Double]) exten
     this
   }
 
-  def updateFitness(): Particle = {
+  def updateFitness(data: Array[Array[Double]]): Particle = {
     var num = 0.0
+    val len = data.length
 
-    for (i <- 0 to 99999) {
-      num += 1
+    for (i <- 0 until len) {
+      var k = 0
+      for (j <- data(i).indices) {
+        if (cur.pos(k) < 0.66) {
+          if (data(i)(j) >= cur.pos(k + 1) && data(i)(j) <= cur.pos(k + 2)) {
+            num += 1.0
+          }
+        }
+        k += 3
+      }
     }
 
-    cur.fitness(0) = num / 100000000
+    cur.fitness(0) = num / len
 
     this
   }
@@ -149,7 +166,7 @@ class Particle(dimP: Int, dimF: Int, lB: Array[Double], uB: Array[Double]) exten
     }
     println()
   }
-//
+
 //  def updateBest(): Unit = {
 //    updateLocal()
 //    updateGlobal()
