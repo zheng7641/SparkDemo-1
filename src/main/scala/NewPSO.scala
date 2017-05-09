@@ -32,13 +32,11 @@ object NewPSO {
 
     val df = ss.createDataFrame(rowRDD, schema)
 
-    df.cache()
-
     //init particle swarm
     val dimP = 12
     val dimF = 1
     val population = 10
-    val iteration = 100
+    val iteration = 1
     val length = rowRDD.count()
 
     val fieldNames = df.schema.fieldNames
@@ -59,31 +57,55 @@ object NewPSO {
 
     particles = particleRDD.collect()
 
-//    val acc = ss.sparkContext.longAccumulator("count")
-//    //Method 1: for each particle scan the data in parallel
-//    for (iter <- 0 to iteration) {
+    //acc
+    lineRDD.cache()
+    val acc = ss.sparkContext.longAccumulator("count")
+    for (iter <- 0 until iteration) {
+      println(iter)
+      for (i <- particles.indices) {
+        lineRDD.filter(dataFilterArray(_, particles(i).cur.pos)).foreach(line => acc.add(1L))
+
+        val num = acc.value
+
+        acc.reset()
+
+        particles(i).cur.fitness(0) = num.toDouble / 100000
+      }
+    }
+
+    //cache + count
+//    lineRDD.cache()
+//    for (iter <- 0 until iteration) {
 //      println(iter)
 //      for (i <- particles.indices) {
-//        df.filter(dataFilter(_, particles(i).cur.pos)).foreach(line => acc.add(1L))
-//
-//        val num = acc.value
-//
-//        acc.reset()
+//        val num = lineRDD.filter(dataFilterArray(_, particles(i).cur.pos)).count()
 //
 //        particles(i).cur.fitness(0) = num.toDouble / 100000
 //      }
 //    }
 
-    //Method 2: handle particles in parallel and for each particle scan the data in order
-    lineRDD.cache()
-    val lines = lineRDD.collect()
-    val broadCast = ss.sparkContext.broadcast(lines)
+    //collect + length
+//    lineRDD.cache()
+//    for (iter <- 0 until iteration) {
+//      println(iter)
+//      for (i <- particles.indices) {
+//        val num = lineRDD.filter(dataFilterArray(_, particles(i).cur.pos)).collect().length
+//
+//        particles(i).cur.fitness(0) = num.toDouble / 100000
+//      }
+//    }
 
-    for (iter <- 0 until iteration) {
-      particleRDD = particleRDD.map(_.updateFitness(broadCast.value))
-    }
+    //particle
+//    val lines = lineRDD.collect()
+//    val broadCast = ss.sparkContext.broadcast(lines)
+//
+//    for (iter <- 0 until iteration) {
+//      val tmp = particleRDD.map(_.updateFitness(broadCast.value)).collect()
+//      particleRDD = ss.sparkContext.parallelize(tmp)
+//    }
 
-    val res = particleRDD.collect()
+//    val res = particleRDD.collect()
+    val res = particles
 
     for (i <- res.indices) {
       println(res(i).cur.fitness(0))
@@ -95,6 +117,19 @@ object NewPSO {
   def dataFilter(row: Row, pos: Array[Double]): Boolean = {
     val array = row.toSeq.toArray.map(_.toString.toDouble)
 
+    var j = 0
+    for (i <- array.indices) {
+      if (pos(j) < 0.66) {
+        if (array(i) < pos(j + 1) || array(i) > pos(j + 2)) {
+          return false
+        }
+      }
+      j += 3
+    }
+    true
+  }
+
+  def dataFilterArray(array: Array[Double], pos: Array[Double]): Boolean = {
     var j = 0
     for (i <- array.indices) {
       if (pos(j) < 0.66) {
