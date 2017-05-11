@@ -24,7 +24,7 @@ object NewPSO {
     val schema = StructType(fields)
 
 //    val filePath = "/Users/zhaoxuan/Documents/Data/PSO Data/QU.dat"
-    val filePath = "hdfs://10.109.247.120:9000/input/pso_test_data.txt"
+    val filePath = "hdfs://10.109.247.120:9000/input/pso_test_data_800.txt"
     val rowRDD = ss.sparkContext.textFile(filePath).map(_.split(","))
       .map(line => Row(line(0).toDouble, line(1).toDouble, line(2).toDouble, line(3).toDouble))
 
@@ -35,7 +35,7 @@ object NewPSO {
     //init particle swarm
     val dimP = 12
     val dimF = 1
-    val population = 10
+    val population = 5
     val iteration = 1
     val length = rowRDD.count()
 
@@ -58,31 +58,31 @@ object NewPSO {
     particles = particleRDD.collect()
 
     //acc
-    lineRDD.cache()
-    val acc = ss.sparkContext.longAccumulator("count")
-    for (iter <- 0 until iteration) {
-      println(iter)
-      for (i <- particles.indices) {
-        lineRDD.filter(dataFilterArray(_, particles(i).cur.pos)).foreach(line => acc.add(1L))
-
-        val num = acc.value
-
-        acc.reset()
-
-        particles(i).cur.fitness(0) = num.toDouble / 100000
-      }
-    }
-
-    //cache + count
 //    lineRDD.cache()
+//    val acc = ss.sparkContext.longAccumulator("count")
 //    for (iter <- 0 until iteration) {
 //      println(iter)
 //      for (i <- particles.indices) {
-//        val num = lineRDD.filter(dataFilterArray(_, particles(i).cur.pos)).count()
+//        lineRDD.filter(dataFilterArray(_, particles(i).cur.pos)).foreach(line => acc.add(1L))
+//
+//        val num = acc.value
+//
+//        acc.reset()
 //
 //        particles(i).cur.fitness(0) = num.toDouble / 100000
 //      }
 //    }
+
+    //cache + count
+    lineRDD.cache()
+    for (iter <- 0 until iteration) {
+      println(iter)
+      for (i <- particles.indices) {
+        val num = lineRDD.filter(dataFilterArray(_, particles(i).cur.pos)).count()
+
+        particles(i).cur.fitness(0) = num.toDouble / 100000
+      }
+    }
 
     //collect + length
 //    lineRDD.cache()
@@ -100,10 +100,11 @@ object NewPSO {
 //    val broadCast = ss.sparkContext.broadcast(lines)
 //
 //    for (iter <- 0 until iteration) {
+//      println(iter)
 //      val tmp = particleRDD.map(_.updateFitness(broadCast.value)).collect()
 //      particleRDD = ss.sparkContext.parallelize(tmp)
 //    }
-
+//
 //    val res = particleRDD.collect()
     val res = particles
 
